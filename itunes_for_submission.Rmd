@@ -1,0 +1,446 @@
+---
+title: "My iTunes Dataset"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+library(dplyr)
+```
+
+# Content Page
+
+1. Introduction
+  + 1.1 Description
+  + 1.2 Purpose
+  + 1.3 Variables
+  + 1.4 Key steps
+  
+2. Methods / Analysis
+  + 2.1 Cleaning the data & the issues
+  + 2.2 Some theories
+  + 2.3 Modelling approach
+  
+3. Results
+  + 3.1 RMSE
+  + 3.2 The outliers
+  + 3.3 General trend
+  
+4. Conclusion
+  + 4.1 Summary
+  + 4.2 Potential impact
+  + 4.3 Limitations
+  + 4.4 Future work
+  
+\newpage
+
+# 1. Introduction  
+## 1.1 Description
+iTunes is where I get my music from. Using a paid family monthly subscription like that of Spotify, I am able to listen to unlimited music. On the iTunes app, I am able to retrieve very interesting pieces of information. Below is a snapshot of the dataset in its raw form.  
+  
+![](/Users/izzhafeez/Desktop/Screenshot 2020-02-17 at 1.45.39 PM.png)  
+  
+Unfortunately, I don't know how to extract this as a csv. So I copy-pasted everything in to a txt file. It kinda looks like this:  
+  
+![](/Users/izzhafeez/Desktop/Screenshot 2020-02-17 at 2.04.35 PM.png)  
+  
+After that, it was easy, since every entry is separated by tabs. So I used this code to convert the text into a dataset:  
+  
+```{r}
+raw_itunes <- read.delim('Arcturus/itunes.txt', header = FALSE, sep = "\t", dec = ",")
+names(raw_itunes) <- c('title','downloaded','duration','album','artist','plays','year','genre','last_played','release_date','size','skips')
+raw_itunes$downloaded<-NULL
+```
+  
+(I removed the 'downloaded' column because it is useless..)
+
+## 1.2 Purpose
+Honestly, I've always wanted to use this dataset for something. Looking at the variables, its hard to find a tangible quanitity to predict. But I wanted to know what songs are of my liking. So I ended up choosing to predict the 'Plays' variable. So, given other columns, I would like to predict how many times I've played the song. Hopefully, using this model, I am able to create a spider that finds songs that suit me. But that's a project for another time.  
+
+\newpage
+## 1.3 Variables
+Printed below are the variables found in the dataset:
+```{r}
+names(raw_itunes)
+```
+### title (note: LaTeX doesn't support chinese characters so I am unable to show all the titles..)
+Self-explanatory, contains the title of the song. The important thing to note here is that the title sometimes contains the names of supporting artists. After much exploring, I found out that the only places where artists can be found in the title is after the 'feat.' word. Extracting these names is for another section:
+```{r}
+as.vector(raw_itunes$title[1:5])
+```
+
+### duration
+This represents the duration, in minutes, of the song:
+```{r}
+as.vector(raw_itunes$duration[1:10])
+```
+### album
+The name of the album that the song is from. Ended up not using it:
+```{r}
+as.vector(raw_itunes$album[1:5])
+```
+### artist
+The name of the artist(s) that created / performed the song. Sometimes contains multiple artistes, separated by either commas or the ampersand(&) sign. Same as title in this regard:
+```{r}
+as.data.frame(raw_itunes %>% group_by(artist) %>% 
+            summarize(n=n()) %>% arrange(desc(n)))[1:4,]
+```
+\newpage
+### plays
+Our objective. This records the number of times I've listened to this song:
+```{r}
+as.data.frame(raw_itunes %>% arrange(desc(plays)) %>% select(title, plays))[1:4,]
+```
+### genre
+This records the genre that the song belongs in. Note that there are many different types of genres recorded, with some values missing:
+```{r}
+as.data.frame(raw_itunes %>% group_by(genre) %>% 
+            summarize(n=n()) %>% arrange(desc(n)))[1:4,]
+```
+### last_played
+This records the last time I've played this song. It comes as a string. If it is blank, it means I haven't played the song before:
+```{r}
+as.vector(raw_itunes$last_played)[1:10]
+```
+### release_date
+This records the date that the song is released. It also comes as a string. Similar to last_played, there are missing values:
+```{r}
+as.vector(raw_itunes$release_date)[1:10]
+```
+\newpage
+### size
+This records the file size of the song, aka how much space it takes up on my phone:
+```{r}
+as.vector(raw_itunes$size)[1:10]
+```
+### skips
+This records the number of times I've skipped the song, aka my annoyance with the song.
+```{r}
+as.data.frame(raw_itunes %>% arrange(desc(skips)) %>% select(title, skips))[1:4,]
+```
+## 1.4 Key Steps
+* Things I need to do:
+  + Convert 'last_played' and 'release_date' into datetime strings
+  + Extract artist names from 'title' and 'artist
+  + Convert 'duration' and 'size' into their appropriate units
+  + Clean data
+  + Replace empty data with fake ones
+
+\newpage
+
+# 2. Methods / Analysis
+## 2.1 Cleaning the data
+This data has a few issues. Firstly, there are quite a few missing values.  
+
+### Missing values in skips, plays, genre
+For the numeric ones like 'skips' and 'plays', missing values are due to zeroes. For 'genre', after some searching, I've found that missing values are all 'Instrumental' in nature. So using this code, I am able to replace them:  
+
+```{r}
+raw_itunes$plays[is.na(raw_itunes$plays)] <- 0
+raw_itunes$skips[is.na(raw_itunes$skips)] <- 0
+raw_itunes$genre[raw_itunes$genre==''] <- 'Instrumental'
+```
+
+### Reassigning genre  
+
+There are an unnecessarily large number of genres in this dataset, including the low-count ones like:
+```{r}
+  as.data.frame(raw_itunes %>% group_by(genre) %>% 
+            summarize(n=n()) %>% arrange(n))[1:4,]
+```
+As such, I needed a way to reassign the genres to encompass a smaller variety. I used this code to map the old to the new genres:
+```{r}
+unique_genres <- unique(raw_itunes$genre)
+genres_that_i_want <- c('Non-Asian','Asian','Pop','Jazz','Dance-ish','Rock-ish','For Kids',
+                        'Soundtrack','Rap','Covers','Instrumental','Alternative','Comedy','Misc')
+assigned_genres <- genres_that_i_want[c(1,10,13,5,12,11,6,1,7,3,
+                                        5,9,8,11,3,12,3,12,2,14,
+                                        11,5,6,11,14,1,4,14,9,3,
+                                        9,6,3,2,1,1,5,11,14,6,
+                                        4,9,2,4,2,11,2,2,1,8,
+                                        3,1,2,4)]
+
+genre_map <- setNames(assigned_genres,unique_genres)
+raw_itunes$genre <- genre_map[as.vector(raw_itunes$genre)]
+```  
+
+So now, the least common genres have the following numbers of songs:
+```{r}
+as.data.frame(raw_itunes %>% group_by(genre) %>% 
+            summarize(n=n()) %>% arrange(n))[1:4,]
+```
+\newpage
+### Reformatting duration  
+
+The 'duration' column needs to be reformatted. It is currently of the format 'MM:SS', where the song is MM minutes and SS seconds long. So, I created a new column, labelled 'time_in_seconds' which records the duration in terms of seconds:
+```{r}
+raw_itunes$time_in_seconds <- sapply(as.vector(raw_itunes$duration), function(x){
+  as.numeric(strsplit(x,':')[[1]][1])*60+as.numeric(strsplit(x,':')[[1]][2])
+})
+# Remove invalid / zero length durations
+raw_itunes$time_in_seconds[is.na(raw_itunes$time_in_seconds)] <- 0
+raw_itunes <- subset(raw_itunes, time_in_seconds!=0)
+```
+So now, we can see the longest songs:
+```{r}
+as.data.frame(raw_itunes %>% arrange(desc(time_in_seconds)) %>% select(title, time_in_seconds))[1:4,]
+```  
+
+### Reformatting size  
+
+The 'size' column also needs to be reformatted. Currently, it is either of the form 'x KB' or 'x MB'. I want to convert everything into a standard format. So I used the following code to convert everything to KB as a new column:
+```{r}
+library(tidyr)
+raw_itunes$kb <- sapply(as.vector(raw_itunes$size),function(x){
+  if (grepl('MB',x)) {
+    as.numeric(gsub(' MB','',x))*1000
+  } else {
+    as.numeric(gsub(' KB','',x))
+  }
+})
+```
+### Reformatting dates  
+
+'release_date' and 'last_played' are still in string format, which is not very useful. So, I used this code to convert them into datetime formats:
+```{r echo=FALSE}
+library(lubridate)
+```
+```{r}
+raw_itunes$clean_release_date <- as.Date(raw_itunes$release_date, format='%d/%m/%y')
+raw_itunes$clean_last_played <-as.Date(raw_itunes$last_played, format='%d/%m/%y, %I:%M %p')
+```
+\newpage
+### Faking the data
+I found that the two dates columns mentioned have quite alot of missing data. At first I thought that this wasn't an issue. But later on I found that this causes alot of problems as I will have very few predicting variables. As such, I decided to create fake data. I first retrieve the means and sd of each column (non-NAs) and then I use rtruncnorm to generate new dates that follow the distribution. Somehow, it manages to work. So for example, the average and sd of 'clean_release_date' are shown below:
+```{r}
+print(mean(raw_itunes$clean_release_date[!is.na(raw_itunes$clean_release_date)]))
+print(sd(raw_itunes$clean_release_date[!is.na(raw_itunes$clean_release_date)]))
+```
+```{r echo = FALSE}
+current_date <- Sys.Date()
+year_avg <- mean(raw_itunes$year[!is.na(raw_itunes$year)])
+year_sd <- sd(raw_itunes$year[!is.na(raw_itunes$year)])
+date_avg <- mean(raw_itunes$clean_release_date[!is.na(raw_itunes$clean_release_date)])
+date_sd <- sd(raw_itunes$clean_release_date[!is.na(raw_itunes$clean_release_date)])
+last_played_avg <- mean(raw_itunes$clean_last_played[!is.na(raw_itunes$clean_last_played)])
+last_played_sd <- sd(raw_itunes$clean_last_played[!is.na(raw_itunes$clean_last_played)])
+library(truncnorm)
+raw_itunes$year[is.na(raw_itunes$year)] <- rtruncnorm(length(raw_itunes$year[is.na(raw_itunes$year)]),b=2020-year_avg,mean=year_avg,sd=year_sd)
+raw_itunes$clean_last_played[is.na(raw_itunes$clean_last_played)] <- last_played_avg + rtruncnorm(length(raw_itunes$clean_last_played[is.na(raw_itunes$clean_last_played)]),b=current_date-last_played_avg,mean=0,sd=last_played_sd)
+raw_itunes$clean_release_date[is.na(raw_itunes$clean_release_date)] <- date_avg + rtruncnorm(length(raw_itunes$clean_release_date[is.na(raw_itunes$clean_release_date)]),b=current_date-date_avg,mean=0,sd=date_sd)
+```
+### Further cleaning of release date
+I also found out another problem. For the release date, the format was %d/%m/%y, which meant that the year was reported as double digits. As such, some songs early in the 20th century were wrongly reported as being in the 21st century:
+```{r}
+raw_itunes %>% filter(clean_release_date > Sys.Date()) %>% select(title, clean_release_date)
+```
+So that is fixed with this code:
+```{r}
+year(raw_itunes$clean_release_date[raw_itunes$clean_release_date>current_date]) <- 
++year(raw_itunes$clean_release_date[raw_itunes$clean_release_date>current_date])-100
+```
+### Extracting all artists
+The 'artists' column is far from complete. Multiple artists in the same song are separated by commas. Same goes for the title, where the word 'feat.' appears in many songs. As such, I decided that I want to create a separate row for each artist in the song. Firstly, I created the column 'songId' in order to not lose track of the song in question:
+```{r}
+raw_itunes$songId<-c(1:length(raw_itunes$title))
+```
+Next is just a sequence of str_split, str_replace_all, gsub, and sapply to get what I want (too long to show). So now my top artist list looks like this:
+```{r echo = FALSE}
+library(stringr)
+clean_itunes <- data.frame(matrix(ncol=length(raw_itunes),nrow=0))
+colnames(clean_itunes) <- names(raw_itunes)
+for (i in 1:nrow(raw_itunes)) {
+  tit <- as.character(raw_itunes$title[i])
+  art <- as.character(raw_itunes$artist[i])
+  #Replace all '&' with commas
+  replaced_tit <- str_replace_all(tit,'&',',')
+  replaced_art <- str_replace_all(art,'&',',')
+  all_artists <- c()
+  # Extract all 'featured' artists
+  if (grepl('feat\\.',replaced_tit)) {
+    split_tit <- strsplit(replaced_tit,'feat\\. ')[[1]][-1]
+    split_tit <- strsplit(split_tit,'\\[')[[1]][1]
+    split_tit <- gsub('\\)','',split_tit)
+    split_tit <- gsub('\\]','',split_tit)
+    artists_tit <- strsplit(split_tit,',')[[1]]
+    artists_tit <- sapply(artists_tit,function(x){
+      trimws(x)
+    })
+    all_artists <- c(all_artists,artists_tit)
+  }
+  # Extract all artists under the 'artist' column
+  split_art <- strsplit(replaced_art,',')[[1]]
+  split_art <-sapply(split_art,function(x){
+    trimws(x)
+  })
+  all_artists <- c(all_artists,split_art)
+  names(all_artists) <- NULL
+  # Append near-identical copies of the row, for each artist in the list
+  for (j in all_artists) {
+    row_to_append <- raw_itunes[i,]
+    row_to_append$artist <- j
+    clean_itunes <- rbind(clean_itunes,row_to_append)
+  }
+}
+
+row.names(clean_itunes) <- NULL
+clean_itunes <- as.data.frame(clean_itunes)
+```
+```{r}
+as.data.frame(clean_itunes %>% group_by(artist) %>% 
+            summarize(n=n()) %>% arrange(desc(n)))[1:4,]
+```
+(Not much difference, I know, but trust me on this. BTW since this is a major change, I renamed the dataset 'clean_itunes')
+\newpage  
+
+## 2.2 Some theories  
+
+I have some theories on what variables affect the number of plays in a song. 
+
+### info_density  
+
+First one is info_density, which is how dense the song is. Maybe the denser the music, the more I like it?? So I used the 'kb' and 'time_in_seconds' to create this column.
+```{r}
+clean_itunes <- clean_itunes%>%mutate(info_density = kb/time_in_seconds)
+```
+And now, let's look at the correlation coefficient and the distribution of the info_density:
+```{r}
+library(ggplot2)
+print(cor(clean_itunes$plays,clean_itunes$info_density))
+clean_itunes %>% group_by(genre) %>% filter(info_density<100) %>% 
+ggplot(aes(x=info_density,y=plays,color=genre))+geom_point()
+```  
+Doesn't quite work, but I'll still include it.  
+
+### time_since_last_played  
+If it's been a long time since I played a song, it usually means that i rarely play it:  
+```{r}
+clean_itunes$time_since_last_played <- 
+  as.numeric(current_date) - as.numeric(clean_itunes$clean_last_played)
+print(cor(clean_itunes$time_since_last_played,clean_itunes$plays))
+clean_itunes %>% group_by(genre) %>%
+ggplot(aes(x=time_since_last_played,y=plays,color=genre))+geom_point()
+```  
+\newpage
+### song_age_when_last_played  
+
+As the name suggests:  
+```{r}
+clean_itunes$song_age <- as.numeric(current_date) - as.numeric(clean_itunes$clean_release_date)
+clean_itunes$song_age_when_last_played <- clean_itunes$song_age - clean_itunes$time_since_last_played
+print(cor(clean_itunes$song_age_when_last_played,clean_itunes$plays))
+clean_itunes %>% group_by(genre) %>% 
+ggplot(aes(x=song_age_when_last_played,y=plays,color=genre))+geom_point()
+```  
+
+### Variables bound to artist  
+
+These are variables I can only define within the train set because I'm not supposed to use test data as predictors to avoid overfitting. They are created by first grouping by artist and then do some other operations: 
+
+#### artist_time_spent
+Finds out how much time in total I've spent listening to the artist. sum(plays*time_in_seconds)  
+
+#### artist_plays
+How many times I've played one of their songs. sum(plays)  
+
+#### artist_skips
+How many times I've skipped one of their songs. sum(skips)  
+
+#### artist_total_songs
+How many of their songs I have. n()  
+
+#### artist_avg_time_spent
+Average time spent on their songs. mean(plays*time_in_seconds)  
+
+#### artist_avg_plays
+Average number of times I've played their songs. mean(plays)  
+
+#### artist_avg_skips
+Average number of times I've skipped their songs. mean(skips)  
+
+### Variables bound to genre
+Exactly the same as that for artist.  
+
+
+
+## 2.3 Modelling approach
+After doing the cleaning, I separated the data into an initial 0.9,0.1 split using createDataPartition. A train_set and a validation set. I used a sapply loop to loop through a vector 1:100. Within that loop, from the train_set, I separated that further into a 0.9,0.1 split. An itunes set and a test_set. I performed the artist-wise and the genre-wise operations on the itunes set. Similar to the cor() functions I've done earlier, I then found out what variables are most correlated to the number of plays, choosing the best 10 as predictors:
+```{r eval=FALSE}
+df_of_cors <- as.data.frame(cor(itunes[sapply(itunes,is.numeric)],itunes$plays))
+names(df_of_cors) <- c('R')
+df_of_cors$variable <- row.names(df_of_cors)
+variables_to_train <- df_of_cors[order(-abs(df_of_cors$R)),][2:11,]$variable
+```
+I then used three different training models from the caret package:
+```{r eval=FALSE}
+TrainData <- itunes %>% select(variables_to_train)
+TrainClasses <- itunes$plays
+model_1 <- train(TrainData,TrainClasses,method='glm',family='gaussian',
+  tuneLength=10,trControl=trainControl(method='cv'))
+model_2 <- train(TrainData,TrainClasses,method='glm',family='quasipoisson',
+  tuneLength=10,trControl=trainControl(method='cv'))
+model_3 <- train(TrainData,TrainClasses,method='gamLoess',
+tuneLength=10,trControl=trainControl(method='cv'))
+```
+After that, I merged the artist-wise and genre-wise data from the itunes dataset into the test_set. So now, the test_set has the necessary predictors. After some cleaning, I predicted the test_set plays. I picked the best model out of all of them (best RMSE) and if the RMSE is less than 10, I would use that model to predict the validation plays. And out of all these validation predictions, I averaged them to get my final prediction.
+This process took like 2 hours to complete so I'm not going to show it here.  
+\newpage  
+
+# 3. Results  
+
+## 3.1 RMSE  
+
+I experimented with many regression models. Some had issues, other didn't. Some churned out abyssmal RMSEs, others gave adequate ones. Out of the 100 times I've split the data, only 18 of them reported RMSEs less than 10. Quite sad, but I'll have to deal with it. In the end, the final RMSE I got was quite bad, at 12.06523. 
+\newpage  
+
+## 3.2 The outliers  
+
+I decided to find out what were causing the values to be way off. Using this code, I managed to find out which rows gave the lowest errors:  
+
+![](/Users/izzhafeez/Desktop/Best 10.png)
+Out of this, I noticed one thing: All the play values are small  
+Which kinda makes sense I guess, as it is easier to guess a small number more accurately than a large number.
+Also, I found out which rows gave the highest errors:  
+
+![](/Users/izzhafeez/Desktop/Worst 10.png)  
+\newpage
+Out of this, I noticed two things: 
+1. (Almost) All the play values are large
+2. I rarely listen to these artists  
+So I guess it kinda makes sense that the model would underestimate most of these songs.  
+  
+And then I thought to myself: "Only the sith deals in absolutes" so I turned this around and decided to measure errors percentage-wise. I used the following metric as my new error column:
+```{r eval=FALSE}
+validation <- validation %>% mutate(error=abs(plays/prediction-1))
+```
+And I got these results for the best rows:  
+
+![](/Users/izzhafeez/Desktop/Screenshot 2020-02-19 at 12.21.26 PM.png)
+And these for the worst rows:  
+
+![](/Users/izzhafeez/Desktop/Screenshot 2020-02-19 at 12.21.06 PM.png)  
+
+\newpage
+## 3.3 General trend  
+
+Here is the distribution of the errors:  
+
+![](/Users/izzhafeez/error 2.png)
+,which shows that the majority of the play values were estimated quite well, especially for the miscellaneous genres. However, the Non-Asian songs showed much greater errors, probably because I don't listen to it often. Here is another plot:  
+
+![](/Users/izzhafeez/error plot.png)
+,which shows the general trend that the more I listen to a song, the higher the error is for the song. This is also shown by the correlation coefficient of 0.7911089 between the error and the number of plays.  
+
+# 4. Conclusion
+## 4.1 Summary
+I wanted to find out if there was a way to predict the number of times I listen to a song based on all the other variables in my itunes dataset. I found out that while it was possible, the predictions are way off. This effect is severely compounded for one-hit wonder songs, aka when I only have one song from a particular artist. Other than that, in hindsight, many of the variables that I have been using are not optimal. What I intended at the start was to create a spider program that will use my model to pick out potential songs that I would listen to. However, when I use the 'skips' and 'last_played' columns, the big assumption would be that I have already listened to the song, beating the whole purpose of the model.
+## 4.2 Potential Impact
+My original intention flawed, I can't really think of any other use for this model, other than to compare it with my friends'. Kinda shameful that songs appearing in the dataset are 'Tunak Tunak Tun' and 'Big and Chunky'.
+## 4.3 Limitations
+Already mentioned
+## 4.4 Future work
+I'll try to find a more universal dataset that will improve my prediction model. Reduce my reliance on historical data ('skips','last_played', etc..). And once I re-run this model on this newfound dataset, I will create my spider program. Apart from this I guess I can just compile as many friends' datasets as I can to find out what songs of theirs I would like, but seeing as though people rarely use Apple Music, this is not a viable option.
